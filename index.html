@@ -82,13 +82,16 @@ footer{border-top:1px solid #9d762a;padding:24px 0 35px;text-align:center;color:
   <p class="tree-results-note">These scores are saved only in this browser on this device. They are not combined with votes from other visitors.</p>
 </div>
 </section><section aria-labelledby="opening-hours-title" class="hours"><h2 id="opening-hours-title">Opening Times</h2><div class="hours-list"><div class="hours-row"><strong>Monday</strong><span>11:00am – 11:00pm</span></div><div class="hours-row"><strong>Tuesday</strong><span>11:00am – 11:00pm</span></div><div class="hours-row"><strong>Wednesday</strong><span>11:00am – 11:00pm</span></div><div class="hours-row"><strong>Thursday</strong><span>11:00am – 12:00am</span></div><div class="hours-row"><strong>Friday</strong><span>11:00am – 01:00am</span></div><div class="hours-row"><strong>Saturday</strong><span>11:00am – 01:00am</span></div><div class="hours-row"><strong>Sunday</strong><span>12:00pm – 11:00pm</span></div></div></section><section class="welcome"><div><p>Great atmosphere</p><h2>Everyone<br/><span>welcome</span></h2></div></section><section aria-labelledby="events-title" class="events-board"><h2 id="events-title">Pinned on our board</h2><p class="events-intro">The latest announced nights at The Ironmaster.</p><div class="event-pins"><article class="event-pin"><p class="event-label">Every Tuesday</p><h3>🧠 General Knowledge Quiz</h3><p>Join us every Tuesday for a general knowledge quiz and put your knowledge to the test.</p></article><article class="event-pin"><p class="event-label">Every Thursday</p><h3>🎤 Karaoke Night</h3><p>Grab the mic, bring your friends and sing along with us every Thursday.</p></article><article class="event-pin"><p class="event-label">Every Saturday</p><h3>♫ Live Music &amp; Entertainment</h3><p>Join us for live performers and a great Saturday night atmosphere.</p></article></div></section><section aria-label="Pub features" class="features"><div class="feature"><span class="ico">🍺</span><strong>Great drinks</strong></div><div class="feature"><span class="ico">🎱</span><strong>Pool table</strong></div><div class="feature"><span class="ico">🎯</span><strong>Dart board</strong></div><div class="feature"><span class="ico">🌿</span><strong>Outside garden</strong></div><div class="feature"><span class="ico">📺</span><strong>Live sports</strong></div></section></main><footer><span class="pin">●</span>THE IRONMASTER FAREHAM<br/><span>FAREHAM, HAMPSHIRE</span><p style="letter-spacing:normal;font-size:.7rem">Check our social pages for the latest events, entertainment and televised sport.</p></footer></div>
+<!-- Firebase compat SDKs for shared live voting -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
 (() => {
-  // Voting is now OPEN. It closes automatically at the deadline below.
+  // Shared live voting. Votes are stored in Firestore and streamed to visitors.
   const VOTING_OPEN = true;
   // Midnight at the start of 24 December 2026 (UK time; GMT).
   const VOTING_CLOSES_AT = new Date('2026-12-24T00:00:00+00:00');
-  const STORAGE_KEY = 'ironmasterFarehamChristmasTreeVote2026';
   const labels = ['Option 1', 'Option 2', 'Option 3'];
   const buttons = Array.from(document.querySelectorAll('[data-tree-vote]'));
   const closedNotice = document.getElementById('tree-voting-closed');
@@ -97,40 +100,33 @@ footer{border-top:1px solid #9d762a;padding:24px 0 35px;text-align:center;color:
   const message = document.getElementById('tree-vote-message');
   const countdown = document.getElementById('tree-countdown');
 
-  function readVote() {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); }
-    catch (_) { return null; }
+  const firebaseConfig = {
+    apiKey: 'AIzaSyC0c_dSCxrvDQt1bANAuknvcEHZD1_nyTY',
+    authDomain: 'ironmaster-christmas-comp.firebaseapp.com',
+    projectId: 'ironmaster-christmas-comp',
+    storageBucket: 'ironmaster-christmas-comp.firebasestorage.app',
+    messagingSenderId: '654327461447',
+    appId: '1:654327461447:web:56e8e8f83f200e045ee362',
+    measurementId: 'G-9W088RJ3R2'
+  };
+
+  let db;
+  let currentUser = null;
+  let hasVoted = false;
+  let resultsUnsubscribe = null;
+  let busy = false;
+
+  function setButtonsEnabled(enabled) {
+    buttons.forEach(button => button.disabled = !enabled);
   }
-  function writeVote(option) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ option, castAt: new Date().toISOString() }));
-      return true;
-    } catch (_) { return false; }
-  }
-  function renderResults(vote) {
-    if (!vote || !Number.isInteger(vote.option) || vote.option < 1 || vote.option > 3) {
-      results.classList.remove('is-visible');
-      rows.innerHTML = '';
-      return;
-    }
-    // Without a shared database, this browser can only count its own saved vote.
-    const totals = [0, 0, 0];
-    totals[vote.option - 1] = 1;
-    rows.innerHTML = totals.map((count, i) => `
-      <div class="tree-result-row">
-        <strong>${labels[i]}</strong>
-        <div class="tree-result-track"><div class="tree-result-fill" style="width:${count ? 100 : 0}%"></div></div>
-        <strong>${count} vote${count === 1 ? '' : 's'}</strong>
-      </div>`).join('');
-    results.classList.add('is-visible');
-  }
+
   function updateCountdown() {
     const remaining = VOTING_CLOSES_AT.getTime() - Date.now();
     if (remaining <= 0) {
       countdown.textContent = 'Voting has closed. Thank you for taking part!';
-      buttons.forEach(button => button.disabled = true);
+      setButtonsEnabled(false);
       closedNotice.hidden = true;
-      message.textContent = 'The competition is now closed.';
+      if (!hasVoted) message.textContent = 'The competition is now closed.';
       return;
     }
     const days = Math.floor(remaining / 86400000);
@@ -140,28 +136,111 @@ footer{border-top:1px solid #9d762a;padding:24px 0 35px;text-align:center;color:
     countdown.textContent = `Voting closes in ${days}d ${hours}h ${minutes}m ${seconds}s — midnight on 24 December 2026.`;
   }
 
-  const existingVote = readVote();
-  const beforeDeadline = Date.now() < VOTING_CLOSES_AT.getTime();
-  const canVote = VOTING_OPEN && beforeDeadline && !existingVote;
-  closedNotice.hidden = VOTING_OPEN && beforeDeadline;
-  buttons.forEach(button => button.disabled = !canVote);
-  if (existingVote) message.textContent = `Your vote for ${labels[existingVote.option - 1] || 'your selected tree'} has been saved on this device.`;
-  if (VOTING_OPEN && existingVote) message.textContent = 'You have already voted on this device. Your saved result is shown below.';
-  renderResults(existingVote);
-  buttons.forEach(button => button.addEventListener('click', () => {
-    if (!VOTING_OPEN || Date.now() >= VOTING_CLOSES_AT.getTime() || readVote()) return;
-    const option = Number(button.dataset.treeVote);
-    if (!writeVote(option)) {
-      message.textContent = 'Your browser could not save the vote. Please check your browser storage settings.';
-      return;
+  function renderResults(votes) {
+    const totals = [0, 0, 0];
+    votes.forEach(vote => {
+      const n = Number(vote.treeId);
+      if (Number.isInteger(n) && n >= 1 && n <= 3) totals[n - 1]++;
+    });
+    const max = Math.max(1, ...totals);
+    rows.innerHTML = totals.map((count, i) => `
+      <div class="tree-result-row">
+        <strong>${labels[i]}</strong>
+        <div class="tree-result-track"><div class="tree-result-fill" style="width:${count ? (count / max * 100) : 0}%"></div></div>
+        <strong>${count} vote${count === 1 ? '' : 's'}</strong>
+      </div>`).join('');
+    results.classList.add('is-visible');
+  }
+
+  function listenForLiveResults() {
+    if (resultsUnsubscribe) resultsUnsubscribe();
+    resultsUnsubscribe = db.collection('votes').onSnapshot(snapshot => {
+      renderResults(snapshot.docs.map(doc => doc.data()));
+    }, error => {
+      console.error('Live leaderboard error:', error);
+      message.textContent = 'Your vote is saved, but the live leaderboard could not refresh. Please reload the page.';
+    });
+  }
+
+  function updateVoteState() {
+    const beforeDeadline = Date.now() < VOTING_CLOSES_AT.getTime();
+    closedNotice.hidden = VOTING_OPEN && beforeDeadline;
+    setButtonsEnabled(VOTING_OPEN && beforeDeadline && !hasVoted && !busy && !!currentUser);
+  }
+
+  async function initialise() {
+    try {
+      if (!window.firebase) throw new Error('Firebase SDK did not load.');
+      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+      const auth = firebase.auth();
+      db = firebase.firestore();
+      auth.onAuthStateChanged(async user => {
+        if (!user) {
+          try { await auth.signInAnonymously(); }
+          catch (error) {
+            console.error('Anonymous sign-in failed:', error);
+            message.textContent = 'Voting is temporarily unavailable. Please try again shortly.';
+            setButtonsEnabled(false);
+          }
+          return;
+        }
+        currentUser = user;
+        try {
+          const existing = await db.collection('votes').doc(user.uid).get();
+          hasVoted = existing.exists;
+          if (hasVoted) {
+            const choice = Number(existing.data().treeId);
+            message.textContent = `Thank you! Your vote for ${labels[choice - 1] || 'your selected tree'} has been recorded. The live leaderboard is below.`;
+            listenForLiveResults();
+          } else if (Date.now() >= VOTING_CLOSES_AT.getTime()) {
+            message.textContent = 'The competition is now closed.';
+          } else {
+            message.textContent = 'Choose your favourite tree to cast your vote and reveal the live leaderboard.';
+          }
+          updateVoteState();
+        } catch (error) {
+          console.error('Could not check previous vote:', error);
+          message.textContent = 'We could not check your voting status. Please refresh the page.';
+          setButtonsEnabled(false);
+        }
+      });
+    } catch (error) {
+      console.error('Firebase initialisation failed:', error);
+      message.textContent = 'Voting is temporarily unavailable. Please try again later.';
+      setButtonsEnabled(false);
     }
-    const saved = readVote();
-    message.textContent = `Thank you! Your vote for ${labels[option - 1]} has been counted on this device.`;
-    buttons.forEach(item => item.disabled = true);
-    renderResults(saved);
+  }
+
+  buttons.forEach(button => button.addEventListener('click', async () => {
+    if (!VOTING_OPEN || Date.now() >= VOTING_CLOSES_AT.getTime() || hasVoted || busy || !currentUser || !db) return;
+    const treeId = String(button.dataset.treeVote);
+    if (!['1', '2', '3'].includes(treeId)) return;
+    busy = true;
+    updateVoteState();
+    message.textContent = 'Submitting your vote…';
+    try {
+      await db.collection('votes').doc(currentUser.uid).set({
+        treeId,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      hasVoted = true;
+      message.textContent = `Thank you! Your vote for ${labels[Number(treeId) - 1]} has been counted. Here is the live leaderboard.`;
+      listenForLiveResults();
+    } catch (error) {
+      console.error('Vote submission failed:', error);
+      message.textContent = error.code === 'permission-denied'
+        ? 'Your vote could not be accepted. Voting may have closed, or this account may already have voted.'
+        : 'We could not submit your vote. Please check your connection and try again.';
+    } finally {
+      busy = false;
+      updateVoteState();
+    }
   }));
+
   updateCountdown();
   window.setInterval(updateCountdown, 1000);
+  updateVoteState();
+  initialise();
 })();
 </script>
 </body></html>
